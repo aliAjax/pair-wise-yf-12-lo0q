@@ -160,6 +160,52 @@ textarea {
   margin-bottom: 14px;
 }
 
+.quota {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.quota-item {
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #e8f4ef;
+  color: #14724f;
+  font-size: 12px;
+}
+
+.quota-item.full {
+  background: #fdeceb;
+  color: #c84b31;
+}
+
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff7e6;
+  border: 1px solid #f0d9a8;
+  color: #8a5a00;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.plan {
+  color: #8a5a00;
+  background: #fff7e6;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 0 0 12px;
+}
+
+.plan-input {
+  margin: 0 0 12px;
+}
+
 .record-grid {
   display: grid;
   gap: 12px;

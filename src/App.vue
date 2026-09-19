@@ -97,6 +97,9 @@ const project = {
 
 const fields = project.fields as readonly Field[];
 const statuses = [...project.statuses];
+const SUSPENDED = statuses[1];
+const AREA_QUOTA = 1;
+const areas = fields.find((field) => field.type === "select")?.options ?? [];
 
 function createBlank() {
   return Object.fromEntries(fields.map((field) => [field.key, field.type === "number" ? 0 : ""]));
@@ -122,6 +125,8 @@ const records = ref<RecordItem[]>(loadRecords());
 const form = reactive<Record<string, string | number>>(createBlank());
 const note = ref("");
 const filter = ref(project.filters[0]);
+const planDrafts = reactive<Record<string, string>>({});
+const notice = ref("");
 
 const filteredRecords = computed(() => {
   if (filter.value.startsWith("全部")) return records.value;
@@ -145,6 +150,13 @@ const chartRows = computed(() => statuses.map((status) => ({
 })));
 
 const maxChart = computed(() => Math.max(1, ...chartRows.value.map((row) => row.value)));
+
+const areaQuotaRows = computed(() =>
+  areas.map((area) => ({
+    area,
+    used: records.value.filter((record) => record.area === area && record.status === SUSPENDED).length
+  }))
+);
 
 function persist() {
   localStorage.setItem(project.storageKey, JSON.stringify(records.value));
@@ -178,11 +190,34 @@ function submit() {
 }
 
 function flow(record: RecordItem) {
-  record.status = nextStatus(record.status);
+  const target = nextStatus(record.status);
+  notice.value = "";
+  if (target === SUSPENDED) {
+    const plan = (planDrafts[record.id] || "").trim();
+    if (!plan) {
+      notice.value = `「${primaryText(record)}」暂停前必须填写恢复计划，已保持${record.status}。`;
+      return;
+    }
+    const used = records.value.filter(
+      (item) => item.id !== record.id && item.area === record.area && item.status === SUSPENDED
+    ).length;
+    if (used >= AREA_QUOTA) {
+      notice.value = `区域「${record.area}」暂停配额已满(${used}/${AREA_QUOTA})，「${primaryText(record)}」已保持${record.status}。`;
+      return;
+    }
+    record.recoveryPlan = plan;
+    delete planDrafts[record.id];
+  }
+  if (record.status === SUSPENDED && target !== SUSPENDED) {
+    record.recoveryPlan = "";
+    delete planDrafts[record.id];
+  }
+  record.status = target;
   persist();
 }
 
 function remove(id: string) {
+  delete planDrafts[id];
   records.value = records.value.filter((record) => record.id !== id);
   persist();
 }
@@ -237,6 +272,20 @@ function remove(id: string) {
             </select>
           </div>
 
+          <div class="quota">
+            <span
+              v-for="row in areaQuotaRows"
+              :key="row.area"
+              class="quota-item"
+              :class="{ full: row.used >= AREA_QUOTA }"
+            >{{ row.area }} 暂停 {{ row.used }}/{{ AREA_QUOTA }}</span>
+          </div>
+
+          <p v-if="notice" class="notice" role="alert">
+            {{ notice }}
+            <button class="secondary" type="button" @click="notice = ''">知道了</button>
+          </p>
+
           <div class="record-grid">
             <div v-if="filteredRecords.length === 0" class="empty">暂无匹配数据</div>
             <article v-for="record in filteredRecords" :key="record.id" class="record">
@@ -248,6 +297,11 @@ function remove(id: string) {
                 <span v-for="field in fields" :key="field.key">{{ field.label }}: {{ record[field.key] }}</span>
               </div>
               <p class="note">{{ record.notes }}</p>
+              <p v-if="record.recoveryPlan" class="plan">恢复计划: {{ record.recoveryPlan }}</p>
+              <label v-if="nextStatus(record.status) === SUSPENDED" class="plan-input">
+                恢复计划(暂停前必填)
+                <input v-model="planDrafts[record.id]" placeholder="例如:预计恢复时间、整改安排" />
+              </label>
               <div class="actions">
                 <button type="button" @click="flow(record)">流转状态</button>
                 <button class="secondary" type="button" @click="navigator.clipboard?.writeText(primaryText(record))">复制摘要</button>
