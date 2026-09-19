@@ -123,6 +123,14 @@ const form = reactive<Record<string, string | number>>(createBlank());
 const note = ref("");
 const filter = ref(project.filters[0]);
 
+const areaField = fields.find((field) => field.type === "select");
+const areaKey = areaField?.key ?? "area";
+const suspendedStatus = statuses.find((status) => status.includes("暂停")) ?? statuses[1];
+const areaSuspensionLimit = 1;
+
+const planDrafts = reactive<Record<string, string>>({});
+const rejections = reactive<Record<string, string>>({});
+
 const filteredRecords = computed(() => {
   if (filter.value.startsWith("全部")) return records.value;
   return records.value.filter((record) => Object.values(record).includes(filter.value));
@@ -146,6 +154,13 @@ const chartRows = computed(() => statuses.map((status) => ({
 
 const maxChart = computed(() => Math.max(1, ...chartRows.value.map((row) => row.value)));
 
+const areaQuotas = computed(() =>
+  (areaField?.options ?? []).map((area) => ({
+    area,
+    used: records.value.filter((record) => record.status === suspendedStatus && record[areaKey] === area).length
+  }))
+);
+
 function persist() {
   localStorage.setItem(project.storageKey, JSON.stringify(records.value));
 }
@@ -153,6 +168,16 @@ function persist() {
 function nextStatus(status: string) {
   const index = statuses.indexOf(status);
   return statuses[(index + 1) % statuses.length];
+}
+
+function suspendedPeers(record: RecordItem) {
+  return records.value.filter(
+    (item) => item.id !== record.id && item.status === suspendedStatus && item[areaKey] === record[areaKey]
+  );
+}
+
+function clearRejection(id: string) {
+  delete rejections[id];
 }
 
 function primaryText(record: RecordItem) {
@@ -178,12 +203,32 @@ function submit() {
 }
 
 function flow(record: RecordItem) {
-  record.status = nextStatus(record.status);
+  const target = nextStatus(record.status);
+  if (target === suspendedStatus) {
+    const plan = (planDrafts[record.id] ?? "").trim();
+    if (!plan) {
+      rejections[record.id] = "已就地拒绝：暂停营业前必须填写恢复计划，状态保持不变";
+      return;
+    }
+    const peers = suspendedPeers(record);
+    if (peers.length >= areaSuspensionLimit) {
+      rejections[record.id] = `已就地拒绝：${record[areaKey]}暂停配额 ${areaSuspensionLimit} 家已满（${primaryText(peers[0])} 暂停中），状态保持不变`;
+      return;
+    }
+    record.recoveryPlan = plan;
+    planDrafts[record.id] = "";
+  } else if (record.status === suspendedStatus) {
+    record.recoveryPlan = "";
+  }
+  record.status = target;
+  clearRejection(record.id);
   persist();
 }
 
 function remove(id: string) {
   records.value = records.value.filter((record) => record.id !== id);
+  clearRejection(id);
+  delete planDrafts[id];
   persist();
 }
 </script>
@@ -232,6 +277,14 @@ function remove(id: string) {
         <section class="list-panel">
           <div class="toolbar">
             <h2>{{ project.entityLabel }}列表</h2>
+            <div class="quotas">
+              <span
+                v-for="quota in areaQuotas"
+                :key="quota.area"
+                class="quota"
+                :class="{ full: quota.used >= areaSuspensionLimit }"
+              >{{ quota.area }}暂停 {{ quota.used }}/{{ areaSuspensionLimit }}</span>
+            </div>
             <select v-model="filter">
               <option v-for="item in project.filters" :key="item">{{ item }}</option>
             </select>
@@ -248,6 +301,18 @@ function remove(id: string) {
                 <span v-for="field in fields" :key="field.key">{{ field.label }}: {{ record[field.key] }}</span>
               </div>
               <p class="note">{{ record.notes }}</p>
+              <p v-if="record.status === suspendedStatus && record.recoveryPlan" class="plan">
+                恢复计划：{{ record.recoveryPlan }}
+              </p>
+              <label v-if="nextStatus(record.status) === suspendedStatus" class="plan-input">
+                恢复计划（暂停营业前必填）
+                <input
+                  v-model="planDrafts[record.id]"
+                  placeholder="填写预计恢复时间与安排，否则无法暂停"
+                  @input="clearRejection(record.id)"
+                />
+              </label>
+              <p v-if="rejections[record.id]" class="reject">{{ rejections[record.id] }}</p>
               <div class="actions">
                 <button type="button" @click="flow(record)">流转状态</button>
                 <button class="secondary" type="button" @click="navigator.clipboard?.writeText(primaryText(record))">复制摘要</button>
